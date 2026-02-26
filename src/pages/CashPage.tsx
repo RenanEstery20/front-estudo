@@ -1,156 +1,190 @@
-import axios from 'axios'
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { getCurrentUser, logout } from '../auth'
-import { api } from '../api'
+import axios from "axios";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { getCurrentUser, logout } from "../auth";
+import { api } from "../api";
 import type {
   CashEntry,
   CashEntryType,
   CashPaymentMethod,
   CreateCashEntryDto,
   DailyCashSummary,
-} from '../types/cash'
+} from "../types/cash";
 
 function todayDateInput() {
-  return new Date().toISOString().slice(0, 10)
+  return new Date().toISOString().slice(0, 10);
 }
 
-const currency = new Intl.NumberFormat('pt-BR', {
-  style: 'currency',
-  currency: 'BRL',
-})
+const currency = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+
+function formatDateBR(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match) {
+    const [, year, month, day] = match;
+    return `${day}/${month}/${year}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("pt-BR");
+}
+
+function formatDateTimeBR(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR");
+}
 
 export function CashPage() {
-  const navigate = useNavigate()
-  const currentUser = getCurrentUser()
+  const navigate = useNavigate();
+  const currentUser = getCurrentUser();
 
-  const [entries, setEntries] = useState<CashEntry[]>([])
-  const [summary, setSummary] = useState<DailyCashSummary | null>(null)
-  const [selectedDate, setSelectedDate] = useState(todayDateInput)
-  const [typeFilter, setTypeFilter] = useState<'ALL' | CashEntryType>('ALL')
-  const [paymentFilter, setPaymentFilter] = useState<'ALL' | CashPaymentMethod>('ALL')
-  const [loadingDashboard, setLoadingDashboard] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
+  const [entries, setEntries] = useState<CashEntry[]>([]);
+  const [summary, setSummary] = useState<DailyCashSummary | null>(null);
+  const [selectedDate, setSelectedDate] = useState(todayDateInput);
+  const [typeFilter, setTypeFilter] = useState<"ALL" | CashEntryType>("ALL");
+  const [paymentFilter, setPaymentFilter] = useState<"ALL" | CashPaymentMethod>(
+    "ALL",
+  );
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   const [form, setForm] = useState<CreateCashEntryDto>({
-    type: 'IN',
-    paymentMethod: 'PIX',
+    type: "IN",
+    paymentMethod: "PIX",
     amount: 0,
-    description: '',
-    category: '',
+    description: "",
+    category: "",
     entryDate: todayDateInput(),
-  })
+  });
 
   function handleUnauthorized() {
-    logout()
-    navigate('/login', { replace: true })
+    logout();
+    navigate("/login", { replace: true });
   }
 
   async function loadDashboard() {
-    setLoadingDashboard(true)
-    setError('')
+    setLoadingDashboard(true);
+    setError("");
 
     try {
       const [entriesRes, summaryRes] = await Promise.all([
-        api.get<CashEntry[]>('/cash-entries', {
+        api.get<CashEntry[]>("/cash-entries", {
           params: {
             date: selectedDate,
-            ...(typeFilter !== 'ALL' ? { type: typeFilter } : {}),
-            ...(paymentFilter !== 'ALL' ? { paymentMethod: paymentFilter } : {}),
+            ...(typeFilter !== "ALL" ? { type: typeFilter } : {}),
+            ...(paymentFilter !== "ALL"
+              ? { paymentMethod: paymentFilter }
+              : {}),
           },
         }),
-        api.get<DailyCashSummary>('/cash-summary/daily', {
+        api.get<DailyCashSummary>("/cash-summary/daily", {
           params: { date: selectedDate },
         }),
-      ])
+      ]);
 
-      setEntries(entriesRes.data)
-      setSummary(summaryRes.data)
+      setEntries(entriesRes.data);
+      setSummary(summaryRes.data);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
-        handleUnauthorized()
-        return
+        handleUnauthorized();
+        return;
       }
-      setError('Nao foi possivel carregar os dados do caixa. Verifique se o backend esta rodando.')
+      setError(
+        "Nao foi possivel carregar os dados do caixa. Verifique se o backend esta rodando.",
+      );
     } finally {
-      setLoadingDashboard(false)
+      setLoadingDashboard(false);
     }
   }
 
   useEffect(() => {
-    void loadDashboard()
-  }, [selectedDate, typeFilter, paymentFilter])
+    void loadDashboard();
+  }, [selectedDate, typeFilter, paymentFilter]);
 
   async function handleCreateEntry(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setError('')
+    e.preventDefault();
+    setError("");
 
     if (!form.description.trim()) {
-      setError('Informe uma descricao para o lancamento.')
-      return
+      setError("Informe uma descricao para o lancamento.");
+      return;
     }
 
     if (!Number.isFinite(form.amount) || form.amount <= 0) {
-      setError('Informe um valor maior que zero.')
-      return
+      setError("Informe um valor maior que zero.");
+      return;
     }
 
-    setSubmitting(true)
+    setSubmitting(true);
 
     try {
-      await api.post('/cash-entries', {
+      await api.post("/cash-entries", {
         ...form,
         amount: Number(form.amount),
         category: form.category?.trim() || undefined,
         description: form.description.trim(),
-      })
+      });
 
       setForm((prev) => ({
         ...prev,
         amount: 0,
-        description: '',
-        category: '',
+        description: "",
+        category: "",
         entryDate: prev.entryDate ?? selectedDate,
-      }))
+      }));
 
-      await loadDashboard()
+      await loadDashboard();
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
-        handleUnauthorized()
-        return
+        handleUnauthorized();
+        return;
       }
 
-      const apiMessage = axios.isAxiosError(err) ? err.response?.data?.message : undefined
-      setError(Array.isArray(apiMessage) ? apiMessage.join(', ') : 'Falha ao criar lancamento.')
+      const apiMessage = axios.isAxiosError(err)
+        ? err.response?.data?.message
+        : undefined;
+      setError(
+        Array.isArray(apiMessage)
+          ? apiMessage.join(", ")
+          : "Falha ao criar lancamento.",
+      );
     } finally {
-      setSubmitting(false)
+      setSubmitting(false);
     }
   }
 
   async function handleDeleteEntry(id: string) {
-    setError('')
+    setError("");
     try {
-      await api.delete(`/cash-entries/${id}`)
-      await loadDashboard()
+      await api.delete(`/cash-entries/${id}`);
+      await loadDashboard();
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
-        handleUnauthorized()
-        return
+        handleUnauthorized();
+        return;
       }
-      setError('Falha ao excluir lancamento.')
+      setError("Falha ao excluir lancamento.");
     }
   }
 
   function handleLogout() {
-    logout()
-    navigate('/login', { replace: true })
+    logout();
+    navigate("/login", { replace: true });
   }
 
   const balanceTone =
-    (summary?.balance ?? 0) > 0 ? 'text-emerald-300' : (summary?.balance ?? 0) < 0 ? 'text-red-300' : 'text-slate-100'
+    (summary?.balance ?? 0) > 0
+      ? "text-emerald-300"
+      : (summary?.balance ?? 0) < 0
+        ? "text-red-300"
+        : "text-slate-100";
 
-  const filteredCount = useMemo(() => entries.length, [entries])
+  const filteredCount = useMemo(() => entries.length, [entries]);
 
   return (
     <main className="min-h-screen px-4 py-8">
@@ -158,24 +192,31 @@ export function CashPage() {
         <header className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-md">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-emerald-200/80">Tela Principal</p>
-              <h1 className="mt-1 text-2xl font-semibold text-white sm:text-3xl">Controle de Caixa</h1>
+              <h1 className="mt-1 text-2xl font-semibold text-white sm:text-3xl">
+                Controle de Caixa
+              </h1>
               <p className="mt-2 text-sm text-slate-300">
-                Registre entradas e saidas e acompanhe o resumo do dia em tempo real.
+                Registre entradas e saidas e acompanhe o resumo do dia em tempo
+                real.
               </p>
               {currentUser ? (
                 <p className="mt-1 text-xs text-slate-400">
                   Logado como {currentUser.name} ({currentUser.email})
                 </p>
               ) : null}
+              {currentUser?.company ? (
+                <p className="mt-1 text-xs text-cyan-200/80">
+                  Empresa: {currentUser.company}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <Link
-                to="/credentials"
+                to="/reports"
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 hover:bg-white/10"
               >
-                Credenciais
+                Relatorios
               </Link>
               <button
                 type="button"
@@ -196,63 +237,80 @@ export function CashPage() {
 
         <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <article className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Entradas (dia)</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Entradas (dia)
+            </p>
             <p className="mt-2 text-2xl font-semibold text-emerald-300">
               {currency.format(summary?.totalIn ?? 0)}
             </p>
-            <p className="mt-1 text-xs text-slate-400">{summary?.countIn ?? 0} lancamentos</p>
+            <p className="mt-1 text-xs text-slate-400">
+              {summary?.countIn ?? 0} lancamentos
+            </p>
           </article>
 
           <article className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Saidas (dia)</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Saidas (dia)
+            </p>
             <p className="mt-2 text-2xl font-semibold text-red-300">
               {currency.format(summary?.totalOut ?? 0)}
             </p>
-            <p className="mt-1 text-xs text-slate-400">{summary?.countOut ?? 0} lancamentos</p>
+            <p className="mt-1 text-xs text-slate-400">
+              {summary?.countOut ?? 0} lancamentos
+            </p>
           </article>
 
           <article className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Saldo (dia)</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Saldo (dia)
+            </p>
             <p className={`mt-2 text-2xl font-semibold ${balanceTone}`}>
               {currency.format(summary?.balance ?? 0)}
             </p>
-            <p className="mt-1 text-xs text-slate-400">Data {summary?.date ?? selectedDate}</p>
+            <p className="mt-1 text-xs text-slate-400">
+              Data {formatDateBR(summary?.date ?? selectedDate)}
+            </p>
           </article>
 
           <article className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Itens listados</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{filteredCount}</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Itens listados
+            </p>
+            <p className="mt-2 text-2xl font-semibold text-white">
+              {filteredCount}
+            </p>
             <p className="mt-1 text-xs text-slate-400">
-              Filtro: {typeFilter === 'ALL' ? 'Todos' : typeFilter}
+              Filtro: {typeFilter === "ALL" ? "Todos" : typeFilter}
             </p>
           </article>
         </section>
 
         <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
           <section className="rounded-3xl border border-white/10 bg-slate-950/70 p-6 backdrop-blur-xl">
-            <h2 className="text-lg font-semibold text-white">Novo lancamento</h2>
-            <p className="mt-1 text-sm text-slate-400">Integrado com POST /cash-entries</p>
+            <h2 className="text-lg font-semibold text-white">
+              Novo lancamento
+            </h2>
 
             <form className="mt-5 space-y-4" onSubmit={handleCreateEntry}>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, type: 'IN' }))}
+                  onClick={() => setForm((prev) => ({ ...prev, type: "IN" }))}
                   className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
-                    form.type === 'IN'
-                      ? 'border-emerald-300/60 bg-emerald-300/20 text-emerald-100'
-                      : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                    form.type === "IN"
+                      ? "border-emerald-300/60 bg-emerald-300/20 text-emerald-100"
+                      : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
                   }`}
                 >
                   Entrada
                 </button>
                 <button
                   type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, type: 'OUT' }))}
+                  onClick={() => setForm((prev) => ({ ...prev, type: "OUT" }))}
                   className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
-                    form.type === 'OUT'
-                      ? 'border-red-300/60 bg-red-300/20 text-red-100'
-                      : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                    form.type === "OUT"
+                      ? "border-red-300/60 bg-red-300/20 text-red-100"
+                      : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
                   }`}
                 >
                   Saida
@@ -260,20 +318,28 @@ export function CashPage() {
               </div>
 
               <div>
-                <label htmlFor="entryDate" className="mb-2 block text-sm text-slate-200">
+                <label
+                  htmlFor="entryDate"
+                  className="mb-2 block text-sm text-slate-200"
+                >
                   Data do lancamento
                 </label>
                 <input
                   id="entryDate"
                   type="date"
-                  value={form.entryDate ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, entryDate: e.target.value }))}
+                  value={form.entryDate ?? ""}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, entryDate: e.target.value }))
+                  }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/60"
                 />
               </div>
 
               <div>
-                <label htmlFor="paymentMethod" className="mb-2 block text-sm text-slate-200">
+                <label
+                  htmlFor="paymentMethod"
+                  className="mb-2 block text-sm text-slate-200"
+                >
                   Forma de pagamento
                 </label>
                 <select
@@ -286,7 +352,7 @@ export function CashPage() {
                     }))
                   }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/60"
-                  style={{ colorScheme: 'dark' }}
+                  style={{ colorScheme: "dark" }}
                 >
                   <option value="PIX" className="bg-slate-900 text-white">
                     PIX
@@ -301,7 +367,10 @@ export function CashPage() {
               </div>
 
               <div>
-                <label htmlFor="amount" className="mb-2 block text-sm text-slate-200">
+                <label
+                  htmlFor="amount"
+                  className="mb-2 block text-sm text-slate-200"
+                >
                   Valor
                 </label>
                 <input
@@ -309,9 +378,12 @@ export function CashPage() {
                   type="number"
                   min="0.01"
                   step="0.01"
-                  value={form.amount || ''}
+                  value={form.amount || ""}
                   onChange={(e) =>
-                    setForm((prev) => ({ ...prev, amount: Number(e.target.value) || 0 }))
+                    setForm((prev) => ({
+                      ...prev,
+                      amount: Number(e.target.value) || 0,
+                    }))
                   }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                   placeholder="0.00"
@@ -319,26 +391,39 @@ export function CashPage() {
               </div>
 
               <div>
-                <label htmlFor="description" className="mb-2 block text-sm text-slate-200">
+                <label
+                  htmlFor="description"
+                  className="mb-2 block text-sm text-slate-200"
+                >
                   Descricao
                 </label>
                 <input
                   id="description"
                   value={form.description}
-                  onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                   placeholder="Ex: venda no pix / pagamento fornecedor"
                 />
               </div>
 
               <div>
-                <label htmlFor="category" className="mb-2 block text-sm text-slate-200">
+                <label
+                  htmlFor="category"
+                  className="mb-2 block text-sm text-slate-200"
+                >
                   Categoria (opcional)
                 </label>
                 <input
                   id="category"
-                  value={form.category ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
+                  value={form.category ?? ""}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, category: e.target.value }))
+                  }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                   placeholder="Vendas, Aluguel, Fornecedor..."
                 />
@@ -349,23 +434,24 @@ export function CashPage() {
                 disabled={submitting}
                 className="w-full rounded-xl bg-cyan-300 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {submitting ? 'Salvando...' : 'Registrar lancamento'}
+                {submitting ? "Salvando..." : "Registrar lancamento"}
               </button>
             </form>
           </section>
 
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
+            <div className="mb-2.5">
+              <h2 className="text-lg font-semibold text-white">
+                Movimentações do dia {formatDateBR(summary?.date ?? selectedDate)}
+              </h2>
+            </div>
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Movimentacoes do caixa</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  Integrado com GET /cash-entries e GET /cash-summary/daily
-                </p>
-              </div>
-
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[180px_140px_160px_auto]">
                 <div>
-                  <label htmlFor="filter-date" className="mb-1 block text-xs text-slate-400">
+                  <label
+                    htmlFor="filter-date"
+                    className="mb-1 block text-xs text-slate-400"
+                  >
                     Data
                   </label>
                   <input
@@ -373,23 +459,31 @@ export function CashPage() {
                     type="date"
                     value={selectedDate}
                     onChange={(e) => {
-                      setSelectedDate(e.target.value)
-                      setForm((prev) => ({ ...prev, entryDate: e.target.value }))
+                      setSelectedDate(e.target.value);
+                      setForm((prev) => ({
+                        ...prev,
+                        entryDate: e.target.value,
+                      }));
                     }}
                     className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="filter-type" className="mb-1 block text-xs text-slate-400">
+                  <label
+                    htmlFor="filter-type"
+                    className="mb-1 block text-xs text-slate-400"
+                  >
                     Tipo
                   </label>
                   <select
                     id="filter-type"
                     value={typeFilter}
-                    onChange={(e) => setTypeFilter(e.target.value as 'ALL' | CashEntryType)}
+                    onChange={(e) =>
+                      setTypeFilter(e.target.value as "ALL" | CashEntryType)
+                    }
                     className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
-                    style={{ colorScheme: 'dark' }}
+                    style={{ colorScheme: "dark" }}
                   >
                     <option value="ALL" className="bg-slate-900 text-white">
                       Todos
@@ -404,15 +498,22 @@ export function CashPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="filter-payment" className="mb-1 block text-xs text-slate-400">
+                  <label
+                    htmlFor="filter-payment"
+                    className="mb-1 block text-xs text-slate-400"
+                  >
                     Pagamento
                   </label>
                   <select
                     id="filter-payment"
                     value={paymentFilter}
-                    onChange={(e) => setPaymentFilter(e.target.value as 'ALL' | CashPaymentMethod)}
+                    onChange={(e) =>
+                      setPaymentFilter(
+                        e.target.value as "ALL" | CashPaymentMethod,
+                      )
+                    }
                     className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
-                    style={{ colorScheme: 'dark' }}
+                    style={{ colorScheme: "dark" }}
                   >
                     <option value="ALL" className="bg-slate-900 text-white">
                       Todos
@@ -433,9 +534,9 @@ export function CashPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      const today = todayDateInput()
-                      setSelectedDate(today)
-                      setForm((prev) => ({ ...prev, entryDate: today }))
+                      const today = todayDateInput();
+                      setSelectedDate(today);
+                      setForm((prev) => ({ ...prev, entryDate: today }));
                     }}
                     className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 hover:bg-white/10"
                   >
@@ -463,7 +564,7 @@ export function CashPage() {
             ) : (
               <ul className="space-y-3">
                 {entries.map((entry) => {
-                  const isIn = entry.type === 'IN'
+                  const isIn = entry.type === "IN";
                   return (
                     <li
                       key={entry.id}
@@ -475,11 +576,11 @@ export function CashPage() {
                             <span
                               className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                                 isIn
-                                  ? 'bg-emerald-300/15 text-emerald-200'
-                                  : 'bg-red-300/15 text-red-200'
+                                  ? "bg-emerald-300/15 text-emerald-200"
+                                  : "bg-red-300/15 text-red-200"
                               }`}
                             >
-                              {isIn ? 'Entrada' : 'Saida'}
+                              {isIn ? "Entrada" : "Saida"}
                             </span>
                             {entry.category ? (
                               <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-300">
@@ -488,28 +589,30 @@ export function CashPage() {
                             ) : null}
                             {entry.paymentMethod ? (
                               <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
-                                {entry.paymentMethod === 'CASH'
-                                  ? 'Dinheiro'
-                                  : entry.paymentMethod === 'CARD'
-                                    ? 'Cartao'
-                                    : 'PIX'}
+                                {entry.paymentMethod === "CASH"
+                                  ? "Dinheiro"
+                                  : entry.paymentMethod === "CARD"
+                                    ? "Cartao"
+                                    : "PIX"}
                               </span>
                             ) : null}
                           </div>
 
-                          <p className="mt-2 text-sm font-medium text-white">{entry.description}</p>
+                          <p className="mt-2 text-sm font-medium text-white">
+                            {entry.description}
+                          </p>
                           <p className="mt-1 text-xs text-slate-400">
-                            {new Date(entry.createdAt).toLocaleString()}
+                            {formatDateTimeBR(entry.createdAt)}
                           </p>
                         </div>
 
                         <div className="flex items-center gap-3 sm:flex-col sm:items-end">
                           <p
                             className={`text-base font-semibold ${
-                              isIn ? 'text-emerald-300' : 'text-red-300'
+                              isIn ? "text-emerald-300" : "text-red-300"
                             }`}
                           >
-                            {isIn ? '+' : '-'} {currency.format(entry.amount)}
+                            {isIn ? "+" : "-"} {currency.format(entry.amount)}
                           </p>
                           <button
                             type="button"
@@ -521,7 +624,7 @@ export function CashPage() {
                         </div>
                       </div>
                     </li>
-                  )
+                  );
                 })}
               </ul>
             )}
@@ -529,5 +632,6 @@ export function CashPage() {
         </div>
       </div>
     </main>
-  )
+  );
 }
+

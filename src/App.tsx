@@ -1,8 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { CashPage } from './pages/CashPage'
-import { CredentialsPage } from './pages/CredentialsPage'
 import { LoginPage } from './pages/LoginPage'
+import { ReportsPage } from './pages/ReportsPage'
 
 function App() {
   return (
@@ -18,10 +18,10 @@ function App() {
         }
       />
       <Route
-        path="/credentials"
+        path="/reports"
         element={
           <ProtectedRoute>
-            <CredentialsPage />
+            <ReportsPage />
           </ProtectedRoute>
         }
       />

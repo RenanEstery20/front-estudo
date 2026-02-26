@@ -7,6 +7,7 @@ export type AuthUser = {
   id: string
   email: string
   name: string
+  company: string
   createdAt: string
 }
 
@@ -23,6 +24,7 @@ type RegisterResponse = {
 
 type RegisterInput = {
   name: string
+  company: string
   email: string
   password: string
 }
