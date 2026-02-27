@@ -61,6 +61,12 @@ async function fileToOptimizedDataUrl(file: File) {
   return canvas.toDataURL("image/jpeg", 0.82);
 }
 
+function isLikelyImageFile(file: File) {
+  if (file.type.startsWith("image/")) return true;
+  const lowerName = file.name.toLowerCase();
+  return /\.(png|jpe?g|webp|bmp|gif|heic|heif)$/i.test(lowerName);
+}
+
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -230,12 +236,17 @@ export function CashPage() {
     setScanningReceipt(true);
 
     try {
-      if (!file.type.startsWith("image/")) {
+      if (!isLikelyImageFile(file)) {
         setError("Arquivo invalido. Envie uma imagem.");
         return;
       }
 
       const base64Image = await fileToOptimizedDataUrl(file);
+      if (!base64Image.startsWith("data:image/")) {
+        setError("Arquivo invalido. Envie uma imagem.");
+        return;
+      }
+
       if (base64Image.length > 9_500_000) {
         setError("Imagem muito grande. Tire a foto mais de perto ou com menor resolucao.");
         return;
