@@ -84,6 +84,14 @@ function formatDateTimeBR(value: string) {
   return date.toLocaleString("pt-BR");
 }
 
+function extractApiMessage(err: unknown): string | undefined {
+  if (!axios.isAxiosError(err)) return undefined;
+  const message = err.response?.data?.message;
+  if (Array.isArray(message)) return message.join(", ");
+  if (typeof message === "string" && message.trim()) return message;
+  return undefined;
+}
+
 export function CashPage() {
   const navigate = useNavigate();
   const currentUser = getCurrentUser();
@@ -194,13 +202,8 @@ export function CashPage() {
         return;
       }
 
-      const apiMessage = axios.isAxiosError(err)
-        ? err.response?.data?.message
-        : undefined;
       setError(
-        Array.isArray(apiMessage)
-          ? apiMessage.join(", ")
-          : "Falha ao criar lancamento.",
+        extractApiMessage(err) ?? "Falha ao criar lancamento.",
       );
     } finally {
       setSubmitting(false);
@@ -263,13 +266,9 @@ export function CashPage() {
         `Leitura concluida (${confidencePercent}% de confianca). Confira os campos antes de salvar.`,
       );
     } catch (err) {
-      const apiMessage = axios.isAxiosError(err)
-        ? err.response?.data?.message
-        : undefined;
       setError(
-        Array.isArray(apiMessage)
-          ? apiMessage.join(", ")
-          : "Falha ao ler comprovante. Tente novamente com uma foto mais nitida.",
+        extractApiMessage(err) ??
+          "Falha ao ler comprovante. Tente novamente com uma foto mais nitida.",
       );
     } finally {
       setScanningReceipt(false);
