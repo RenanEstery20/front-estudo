@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getCurrentUser, logout } from "../auth";
 import { api } from "../api";
@@ -9,10 +9,56 @@ import type {
   CashPaymentMethod,
   CreateCashEntryDto,
   DailyCashSummary,
+  ReceiptScanResult,
 } from "../types/cash";
 
 function todayDateInput() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Falha ao ler imagem."));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error("Falha ao ler imagem."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function dataUrlToImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Falha ao carregar imagem."));
+    image.src = dataUrl;
+  });
+}
+
+async function fileToOptimizedDataUrl(file: File) {
+  const original = await fileToDataUrl(file);
+  const image = await dataUrlToImage(original);
+  const maxDimension = 1600;
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Falha ao preparar imagem.");
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", 0.82);
 }
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -51,7 +97,10 @@ export function CashPage() {
   );
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [scanningReceipt, setScanningReceipt] = useState(false);
+  const [ocrInfo, setOcrInfo] = useState("");
   const [error, setError] = useState("");
+  const receiptInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<CreateCashEntryDto>({
     type: "IN",
@@ -169,6 +218,64 @@ export function CashPage() {
         return;
       }
       setError("Falha ao excluir lancamento.");
+    }
+  }
+
+  async function handleScanReceiptFile(file: File) {
+    setError("");
+    setOcrInfo("");
+    setScanningReceipt(true);
+
+    try {
+      if (!file.type.startsWith("image/")) {
+        setError("Arquivo invalido. Envie uma imagem.");
+        return;
+      }
+
+      const base64Image = await fileToOptimizedDataUrl(file);
+      if (base64Image.length > 9_500_000) {
+        setError("Imagem muito grande. Tire a foto mais de perto ou com menor resolucao.");
+        return;
+      }
+
+      const res = await api.post<ReceiptScanResult>("/cash-entries/scan-receipt", {
+        base64Image,
+        language: "por",
+      });
+      const parsed = res.data;
+
+      setForm((prev) => ({
+        ...prev,
+        type: parsed.type ?? prev.type,
+        paymentMethod: parsed.paymentMethod ?? prev.paymentMethod,
+        amount: parsed.amount ?? prev.amount,
+        description: parsed.description ?? prev.description,
+        category: parsed.category ?? prev.category,
+        entryDate: parsed.entryDate ?? prev.entryDate,
+      }));
+
+      if (parsed.entryDate) {
+        setSelectedDate(parsed.entryDate);
+      }
+
+      const confidencePercent = Math.round((parsed.confidence ?? 0) * 100);
+      setOcrInfo(
+        `Leitura concluida (${confidencePercent}% de confianca). Confira os campos antes de salvar.`,
+      );
+    } catch (err) {
+      const apiMessage = axios.isAxiosError(err)
+        ? err.response?.data?.message
+        : undefined;
+      setError(
+        Array.isArray(apiMessage)
+          ? apiMessage.join(", ")
+          : "Falha ao ler comprovante. Tente novamente com uma foto mais nitida.",
+      );
+    } finally {
+      setScanningReceipt(false);
+      if (receiptInputRef.current) {
+        receiptInputRef.current.value = "";
+      }
     }
   }
 
@@ -292,6 +399,40 @@ export function CashPage() {
             </h2>
 
             <form className="mt-5 space-y-4" onSubmit={handleCreateEntry}>
+              <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3">
+                <p className="text-sm font-medium text-cyan-100">
+                  Leitura de comprovante por foto (mobile)
+                </p>
+                <p className="mt-1 text-xs text-cyan-100/80">
+                  Tire a foto do papel e preencha automaticamente os campos.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => receiptInputRef.current?.click()}
+                    disabled={scanningReceipt}
+                    className="rounded-lg border border-cyan-100/30 bg-cyan-200/80 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {scanningReceipt ? "Lendo foto..." : "Tirar foto / Selecionar imagem"}
+                  </button>
+                  <input
+                    ref={receiptInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      void handleScanReceiptFile(file);
+                    }}
+                  />
+                </div>
+                {ocrInfo ? (
+                  <p className="mt-2 text-xs text-cyan-100">{ocrInfo}</p>
+                ) : null}
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"

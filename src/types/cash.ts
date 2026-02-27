@@ -29,3 +29,14 @@ export type DailyCashSummary = {
   countOut: number
   totalEntries: number
 }
+
+export type ReceiptScanResult = {
+  amount?: number
+  paymentMethod?: CashPaymentMethod
+  type?: CashEntryType
+  entryDate?: string
+  description?: string
+  category?: string
+  confidence: number
+  rawText: string
+}
