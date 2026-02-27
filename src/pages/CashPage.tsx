@@ -32,8 +32,33 @@ function fileToImage(file: File) {
   });
 }
 
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Falha ao converter arquivo para base64."));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo da camera."));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function fileToOptimizedDataUrl(file: File) {
-  const image = await fileToImage(file);
+  let image: HTMLImageElement;
+  try {
+    image = await fileToImage(file);
+  } catch {
+    const original = await fileToDataUrl(file);
+    if (!original.startsWith("data:image/")) {
+      throw new Error("Arquivo recebido nao e imagem valida.");
+    }
+    return original;
+  }
+
   const maxDimension = 1600;
   const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
   const width = Math.max(1, Math.round(image.width * scale));
@@ -257,8 +282,10 @@ export function CashPage() {
         `Leitura concluida (${confidencePercent}% de confianca). Confira os campos antes de salvar.`,
       );
     } catch (err) {
+      const localMessage = err instanceof Error ? err.message : undefined;
       setError(
         extractApiMessage(err) ??
+          localMessage ??
           "Falha ao ler comprovante. Tente novamente com uma foto mais nitida.",
       );
     } finally {
