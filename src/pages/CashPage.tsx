@@ -16,33 +16,24 @@ function todayDateInput() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error("Falha ao ler imagem."));
-        return;
-      }
-      resolve(reader.result);
-    };
-    reader.onerror = () => reject(new Error("Falha ao ler imagem."));
-    reader.readAsDataURL(file);
-  });
-}
-
-function dataUrlToImage(dataUrl: string) {
+function fileToImage(file: File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Falha ao carregar imagem."));
-    image.src = dataUrl;
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Falha ao carregar imagem."));
+    };
+    image.src = objectUrl;
   });
 }
 
 async function fileToOptimizedDataUrl(file: File) {
-  const original = await fileToDataUrl(file);
-  const image = await dataUrlToImage(original);
+  const image = await fileToImage(file);
   const maxDimension = 1600;
   const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
   const width = Math.max(1, Math.round(image.width * scale));
@@ -59,12 +50,6 @@ async function fileToOptimizedDataUrl(file: File) {
 
   context.drawImage(image, 0, 0, width, height);
   return canvas.toDataURL("image/jpeg", 0.82);
-}
-
-function isLikelyImageFile(file: File) {
-  if (file.type.startsWith("image/")) return true;
-  const lowerName = file.name.toLowerCase();
-  return /\.(png|jpe?g|webp|bmp|gif|heic|heif)$/i.test(lowerName);
 }
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -236,14 +221,9 @@ export function CashPage() {
     setScanningReceipt(true);
 
     try {
-      if (!isLikelyImageFile(file)) {
-        setError("Arquivo invalido. Envie uma imagem.");
-        return;
-      }
-
       const base64Image = await fileToOptimizedDataUrl(file);
-      if (!base64Image.startsWith("data:image/")) {
-        setError("Arquivo invalido. Envie uma imagem.");
+      if (!base64Image.startsWith("data:image/") || !base64Image.includes(";base64,")) {
+        setError("Nao foi possivel ler o arquivo como imagem.");
         return;
       }
 
