@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getCurrentUser, logout } from "../auth";
 import { api } from "../api";
@@ -9,72 +9,11 @@ import type {
   CashPaymentMethod,
   CreateCashEntryDto,
   DailyCashSummary,
-  ReceiptScanResult,
+  PaginatedCashEntries,
 } from "../types/cash";
 
 function todayDateInput() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function fileToImage(file: File) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("Falha ao carregar imagem."));
-    };
-    image.src = objectUrl;
-  });
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error("Falha ao converter arquivo para base64."));
-        return;
-      }
-      resolve(reader.result);
-    };
-    reader.onerror = () => reject(new Error("Falha ao ler arquivo da camera."));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function fileToOptimizedDataUrl(file: File) {
-  let image: HTMLImageElement;
-  try {
-    image = await fileToImage(file);
-  } catch {
-    const original = await fileToDataUrl(file);
-    if (!original.startsWith("data:image/")) {
-      throw new Error("Arquivo recebido nao e imagem valida.");
-    }
-    return original;
-  }
-
-  const maxDimension = 1600;
-  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("Falha ao preparar imagem.");
-  }
-
-  context.drawImage(image, 0, 0, width, height);
-  return canvas.toDataURL("image/jpeg", 0.82);
 }
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -100,12 +39,15 @@ function formatDateTimeBR(value: string) {
   return date.toLocaleString("pt-BR");
 }
 
-function extractApiMessage(err: unknown): string | undefined {
-  if (!axios.isAxiosError(err)) return undefined;
-  const message = err.response?.data?.message;
-  if (Array.isArray(message)) return message.join(", ");
-  if (typeof message === "string" && message.trim()) return message;
-  return undefined;
+function formatCurrencyInputFromDigits(digits: string) {
+  const normalized = digits.replace(/\D/g, "");
+  if (!normalized) return "";
+  const centsValue = Number(normalized);
+  if (!Number.isFinite(centsValue)) return "";
+  return (centsValue / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 export function CashPage() {
@@ -121,10 +63,12 @@ export function CashPage() {
   );
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [scanningReceipt, setScanningReceipt] = useState(false);
-  const [ocrInfo, setOcrInfo] = useState("");
   const [error, setError] = useState("");
-  const receiptInputRef = useRef<HTMLInputElement>(null);
+  const [amountInput, setAmountInput] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
 
   const [form, setForm] = useState<CreateCashEntryDto>({
     type: "IN",
@@ -146,9 +90,11 @@ export function CashPage() {
 
     try {
       const [entriesRes, summaryRes] = await Promise.all([
-        api.get<CashEntry[]>("/cash-entries", {
+        api.get<PaginatedCashEntries>("/cash-entries/paginated", {
           params: {
             date: selectedDate,
+            page,
+            pageSize,
             ...(typeFilter !== "ALL" ? { type: typeFilter } : {}),
             ...(paymentFilter !== "ALL"
               ? { paymentMethod: paymentFilter }
@@ -160,7 +106,9 @@ export function CashPage() {
         }),
       ]);
 
-      setEntries(entriesRes.data);
+      setEntries(entriesRes.data.items);
+      setTotalPages(entriesRes.data.totalPages);
+      setTotalItems(entriesRes.data.totalItems);
       setSummary(summaryRes.data);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
@@ -177,7 +125,7 @@ export function CashPage() {
 
   useEffect(() => {
     void loadDashboard();
-  }, [selectedDate, typeFilter, paymentFilter]);
+  }, [selectedDate, typeFilter, paymentFilter, page, pageSize]);
 
   async function handleCreateEntry(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -210,6 +158,7 @@ export function CashPage() {
         category: "",
         entryDate: prev.entryDate ?? selectedDate,
       }));
+      setAmountInput("");
 
       await loadDashboard();
     } catch (err) {
@@ -218,8 +167,13 @@ export function CashPage() {
         return;
       }
 
+      const apiMessage = axios.isAxiosError(err)
+        ? err.response?.data?.message
+        : undefined;
       setError(
-        extractApiMessage(err) ?? "Falha ao criar lancamento.",
+        Array.isArray(apiMessage)
+          ? apiMessage.join(", ")
+          : "Falha ao criar lancamento.",
       );
     } finally {
       setSubmitting(false);
@@ -240,62 +194,6 @@ export function CashPage() {
     }
   }
 
-  async function handleScanReceiptFile(file: File) {
-    setError("");
-    setOcrInfo("");
-    setScanningReceipt(true);
-
-    try {
-      const base64Image = await fileToOptimizedDataUrl(file);
-      if (!base64Image.startsWith("data:image/") || !base64Image.includes(";base64,")) {
-        setError("Nao foi possivel ler o arquivo como imagem.");
-        return;
-      }
-
-      if (base64Image.length > 9_500_000) {
-        setError("Imagem muito grande. Tire a foto mais de perto ou com menor resolucao.");
-        return;
-      }
-
-      const res = await api.post<ReceiptScanResult>("/cash-entries/scan-receipt", {
-        base64Image,
-        language: "por",
-      });
-      const parsed = res.data;
-
-      setForm((prev) => ({
-        ...prev,
-        type: parsed.type ?? prev.type,
-        paymentMethod: parsed.paymentMethod ?? prev.paymentMethod,
-        amount: parsed.amount ?? prev.amount,
-        description: parsed.description ?? prev.description,
-        category: parsed.category ?? prev.category,
-        entryDate: parsed.entryDate ?? prev.entryDate,
-      }));
-
-      if (parsed.entryDate) {
-        setSelectedDate(parsed.entryDate);
-      }
-
-      const confidencePercent = Math.round((parsed.confidence ?? 0) * 100);
-      setOcrInfo(
-        `Leitura concluida (${confidencePercent}% de confianca). Confira os campos antes de salvar.`,
-      );
-    } catch (err) {
-      const localMessage = err instanceof Error ? err.message : undefined;
-      setError(
-        extractApiMessage(err) ??
-          localMessage ??
-          "Falha ao ler comprovante. Tente novamente com uma foto mais nitida.",
-      );
-    } finally {
-      setScanningReceipt(false);
-      if (receiptInputRef.current) {
-        receiptInputRef.current.value = "";
-      }
-    }
-  }
-
   function handleLogout() {
     logout();
     navigate("/login", { replace: true });
@@ -308,7 +206,9 @@ export function CashPage() {
         ? "text-red-300"
         : "text-slate-100";
 
-  const filteredCount = useMemo(() => entries.length, [entries]);
+  const filteredCount = useMemo(() => totalItems, [totalItems]);
+  const hasPrevPage = page > 1;
+  const hasNextPage = page < totalPages;
 
   return (
     <main className="min-h-screen px-4 py-8">
@@ -416,40 +316,6 @@ export function CashPage() {
             </h2>
 
             <form className="mt-5 space-y-4" onSubmit={handleCreateEntry}>
-              <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3">
-                <p className="text-sm font-medium text-cyan-100">
-                  Leitura de comprovante por foto (mobile)
-                </p>
-                <p className="mt-1 text-xs text-cyan-100/80">
-                  Tire a foto do papel e preencha automaticamente os campos.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => receiptInputRef.current?.click()}
-                    disabled={scanningReceipt}
-                    className="rounded-lg border border-cyan-100/30 bg-cyan-200/80 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {scanningReceipt ? "Lendo foto..." : "Tirar foto / Selecionar imagem"}
-                  </button>
-                  <input
-                    ref={receiptInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      void handleScanReceiptFile(file);
-                    }}
-                  />
-                </div>
-                {ocrInfo ? (
-                  <p className="mt-2 text-xs text-cyan-100">{ocrInfo}</p>
-                ) : null}
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -533,18 +399,21 @@ export function CashPage() {
                 </label>
                 <input
                   id="amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={form.amount || ""}
+                  type="text"
+                  inputMode="numeric"
+                  value={amountInput}
                   onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      amount: Number(e.target.value) || 0,
-                    }))
+                    {
+                      const digits = e.target.value.replace(/\D/g, "");
+                      setAmountInput(formatCurrencyInputFromDigits(digits));
+                      setForm((prev) => ({
+                        ...prev,
+                        amount: digits ? Number(digits) / 100 : 0,
+                      }));
+                    }
                   }
                   className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
-                  placeholder="0.00"
+                  placeholder="0,00"
                 />
               </div>
 
@@ -617,6 +486,7 @@ export function CashPage() {
                     type="date"
                     value={selectedDate}
                     onChange={(e) => {
+                      setPage(1);
                       setSelectedDate(e.target.value);
                       setForm((prev) => ({
                         ...prev,
@@ -637,9 +507,10 @@ export function CashPage() {
                   <select
                     id="filter-type"
                     value={typeFilter}
-                    onChange={(e) =>
-                      setTypeFilter(e.target.value as "ALL" | CashEntryType)
-                    }
+                    onChange={(e) => {
+                      setPage(1);
+                      setTypeFilter(e.target.value as "ALL" | CashEntryType);
+                    }}
                     className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
                     style={{ colorScheme: "dark" }}
                   >
@@ -665,11 +536,12 @@ export function CashPage() {
                   <select
                     id="filter-payment"
                     value={paymentFilter}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      setPage(1);
                       setPaymentFilter(
                         e.target.value as "ALL" | CashPaymentMethod,
-                      )
-                    }
+                      );
+                    }}
                     className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
                     style={{ colorScheme: "dark" }}
                   >
@@ -693,6 +565,7 @@ export function CashPage() {
                     type="button"
                     onClick={() => {
                       const today = todayDateInput();
+                      setPage(1);
                       setSelectedDate(today);
                       setForm((prev) => ({ ...prev, entryDate: today }));
                     }}
@@ -720,71 +593,126 @@ export function CashPage() {
                 Nenhum lancamento para a data selecionada.
               </div>
             ) : (
-              <ul className="space-y-3">
-                {entries.map((entry) => {
-                  const isIn = entry.type === "IN";
-                  return (
-                    <li
-                      key={entry.id}
-                      className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                isIn
-                                  ? "bg-emerald-300/15 text-emerald-200"
-                                  : "bg-red-300/15 text-red-200"
-                              }`}
-                            >
-                              {isIn ? "Entrada" : "Saida"}
-                            </span>
-                            {entry.category ? (
-                              <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-300">
-                                {entry.category}
+              <>
+                <ul className="space-y-3">
+                  {entries.map((entry) => {
+                    const isIn = entry.type === "IN";
+                    return (
+                      <li
+                        key={entry.id}
+                        className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                  isIn
+                                    ? "bg-emerald-300/15 text-emerald-200"
+                                    : "bg-red-300/15 text-red-200"
+                                }`}
+                              >
+                                {isIn ? "Entrada" : "Saida"}
                               </span>
-                            ) : null}
-                            {entry.paymentMethod ? (
-                              <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
-                                {entry.paymentMethod === "CASH"
-                                  ? "Dinheiro"
-                                  : entry.paymentMethod === "CARD"
-                                    ? "Cartao"
-                                    : "PIX"}
-                              </span>
-                            ) : null}
+                              {entry.category ? (
+                                <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-300">
+                                  {entry.category}
+                                </span>
+                              ) : null}
+                              {entry.paymentMethod ? (
+                                <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
+                                  {entry.paymentMethod === "CASH"
+                                    ? "Dinheiro"
+                                    : entry.paymentMethod === "CARD"
+                                      ? "Cartao"
+                                      : "PIX"}
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <p className="mt-2 text-sm font-medium text-white">
+                              {entry.description}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {formatDateTimeBR(entry.createdAt)}
+                            </p>
                           </div>
 
-                          <p className="mt-2 text-sm font-medium text-white">
-                            {entry.description}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-400">
-                            {formatDateTimeBR(entry.createdAt)}
-                          </p>
+                          <div className="flex items-center gap-3 sm:flex-col sm:items-end">
+                            <p
+                              className={`text-base font-semibold ${
+                                isIn ? "text-emerald-300" : "text-red-300"
+                              }`}
+                            >
+                              {isIn ? "+" : "-"} {currency.format(entry.amount)}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteEntry(entry.id)}
+                              className="rounded-lg border border-red-300/20 bg-red-500/10 px-3 py-2 text-sm text-red-200 hover:bg-red-500/20"
+                            >
+                              Excluir
+                            </button>
+                          </div>
                         </div>
+                      </li>
+                    );
+                  })}
+                </ul>
 
-                        <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-                          <p
-                            className={`text-base font-semibold ${
-                              isIn ? "text-emerald-300" : "text-red-300"
-                            }`}
-                          >
-                            {isIn ? "+" : "-"} {currency.format(entry.amount)}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteEntry(entry.id)}
-                            className="rounded-lg border border-red-300/20 bg-red-500/10 px-3 py-2 text-sm text-red-200 hover:bg-red-500/20"
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                <div className="mt-4 flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-end gap-3">
+                  
+                    <p className="pb-2 text-xs text-slate-400">
+                      Pagina {page} de {totalPages} | {filteredCount} exibidos de{" "}
+                      {totalItems}
+                    </p>
+                      <div>
+                      <select
+                        id="footer-page-size"
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPage(1);
+                          setPageSize(Number(e.target.value));
+                        }}
+                        className="rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none"
+                        style={{ colorScheme: "dark" }}
+                      >
+                        <option value={5} className="bg-slate-900 text-white">
+                          5
+                        </option>
+                        <option value={10} className="bg-slate-900 text-white">
+                          10
+                        </option>
+                        <option value={20} className="bg-slate-900 text-white">
+                          20
+                        </option>
+                        <option value={50} className="bg-slate-900 text-white">
+                          50
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={!hasPrevPage}
+                      onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                      className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!hasNextPage}
+                      onClick={() => setPage((prev) => prev + 1)}
+                      className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Proxima
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </section>
         </div>
@@ -792,4 +720,3 @@ export function CashPage() {
     </main>
   );
 }
-

@@ -30,13 +30,10 @@ export type DailyCashSummary = {
   totalEntries: number
 }
 
-export type ReceiptScanResult = {
-  amount?: number
-  paymentMethod?: CashPaymentMethod
-  type?: CashEntryType
-  entryDate?: string
-  description?: string
-  category?: string
-  confidence: number
-  rawText: string
+export type PaginatedCashEntries = {
+  items: CashEntry[]
+  page: number
+  pageSize: number
+  totalItems: number
+  totalPages: number
 }

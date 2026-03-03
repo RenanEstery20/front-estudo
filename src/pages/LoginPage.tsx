@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { login, register } from '../auth'
 
 type AuthMode = 'login' | 'register'
+const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,64}$/
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -33,6 +34,13 @@ export function LoginPage() {
 
     if (!email.trim() || !password.trim() || (isRegister && (!name.trim() || !company.trim()))) {
       setError('Preencha os campos obrigatorios.')
+      return
+    }
+
+    if (isRegister && !strongPasswordRegex.test(password)) {
+      setError(
+        'Senha fraca. Use 8+ caracteres com letra maiuscula, minuscula, numero e simbolo.',
+      )
       return
     }
 
@@ -120,12 +128,14 @@ export function LoginPage() {
               <>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-200" htmlFor="name">
-                    Nome
+                    Nome *
                   </label>
                   <input
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    required
+                    autoComplete="name"
                     className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                     placeholder="Seu nome"
                   />
@@ -133,12 +143,13 @@ export function LoginPage() {
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-200" htmlFor="company">
-                    Empresa
+                    Empresa *
                   </label>
                   <input
                     id="company"
                     value={company}
                     onChange={(e) => setCompany(e.target.value)}
+                    required
                     className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                     placeholder="Nome da empresa"
                   />
@@ -148,13 +159,15 @@ export function LoginPage() {
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-200" htmlFor="email">
-                Email
+                Email *
               </label>
               <input
                 id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
                 placeholder="voce@email.com"
               />
@@ -162,16 +175,24 @@ export function LoginPage() {
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-200" htmlFor="password">
-                Senha
+                Senha *
               </label>
               <input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={isRegister ? 8 : 1}
+                autoComplete={isRegister ? 'new-password' : 'current-password'}
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
-                placeholder="Minimo 6 caracteres"
+                placeholder={isRegister ? 'Minimo 8 caracteres' : 'Sua senha'}
               />
+              {isRegister ? (
+                <p className="mt-1 text-xs text-slate-400">
+                  Obrigatoria: 8+ caracteres, com maiuscula, minuscula, numero e simbolo.
+                </p>
+              ) : null}
             </div>
 
             {message ? (
